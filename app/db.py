@@ -13,6 +13,22 @@ DB_PATH = Path(DATABASE_URL.removeprefix("sqlite:///"))
 DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 
 SCHEMA = """
+CREATE TABLE IF NOT EXISTS vendor_memory (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    vendor TEXT NOT NULL UNIQUE,
+    category TEXT NOT NULL,
+    source TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS human_corrections (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    transaction_id INTEGER NOT NULL,
+    original_category TEXT,
+    corrected_category TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY(transaction_id) REFERENCES transactions(id)
+);
 CREATE TABLE IF NOT EXISTS runs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     source TEXT NOT NULL,

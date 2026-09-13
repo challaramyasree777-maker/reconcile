@@ -115,10 +115,8 @@ with col2:
             <form action="{API_URL}/auth/form/verify-otp" method="POST">
                 <label for="email">Email</label>
                 <input type="email" id="email" name="email" value="{verify_email}" readonly style="background:#e8eee8;color:#46534c;cursor:not-allowed;">
-                
                 <label for="otp">6-digit OTP</label>
                 <input type="text" id="otp" name="otp" required autocomplete="one-time-code" placeholder="Check server console for local dev">
-                
                 <button type="submit">Verify & Sign In</button>
             </form>
         </div>
@@ -138,10 +136,8 @@ with col2:
             <form action="{API_URL}/auth/form/login" method="POST">
                 <label for="login-email">Email address</label>
                 <input type="email" id="login-email" name="email" placeholder="name@company.com" autocomplete="email" required>
-                
                 <label for="login-password">Password</label>
                 <input type="password" id="login-password" name="password" autocomplete="current-password" required>
-                
                 <button type="submit">Sign In</button>
             </form>
         </div>
@@ -173,13 +169,10 @@ with col2:
             <form action="{API_URL}/auth/form/signup" method="POST">
                 <label for="signup-email">Email address</label>
                 <input type="email" id="signup-email" name="email" placeholder="name@company.com" autocomplete="email" required>
-                
                 <label for="signup-password">Password</label>
                 <input type="password" id="signup-password" name="password" autocomplete="new-password" required>
-                
                 <label for="signup-confirm">Confirm Password</label>
                 <input type="password" id="signup-confirm" name="confirm_password" autocomplete="new-password" required>
-                
                 <button type="submit">Sign Up</button>
             </form>
         </div>

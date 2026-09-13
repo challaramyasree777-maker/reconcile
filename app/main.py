@@ -32,6 +32,10 @@ from app.services.workflow import build_graph
 
 STATIC_DIR = Path(__file__).parent / "static"
 
+# Where the Streamlit frontend lives. Must be set in production to the
+# Render URL of the Streamlit service, otherwise redirects go to localhost.
+FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:8501")
+
 
 class LoginRequest(BaseModel):
     email: str
@@ -276,23 +280,23 @@ def form_login(
     try:
         check_rate_limit(req, max_requests=10)
     except HTTPException:
-        return _redirect("http://localhost:8501/", error="Too many requests. Please try again later.")
+        return _redirect(f"{FRONTEND_URL}/", error="Too many requests. Please try again later.")
         
     is_local = os.getenv("APP_ENV", "local") == "local"
     user = db.one("SELECT id, email, hashed_password, is_active FROM users WHERE email = %s", (email.strip(),))
     
     if not user or not user["hashed_password"] or not verify_password(password, user["hashed_password"]):
-        return _redirect("http://localhost:8501/", error="Incorrect email or password.")
+        return _redirect(f"{FRONTEND_URL}/", error="Incorrect email or password.")
         
     if not user.get("is_active"):
-        return _redirect("http://localhost:8501/", error="Account is pending verification.", verify_email=email.strip(), show_otp="1")
+        return _redirect(f"{FRONTEND_URL}/", error="Account is pending verification.", verify_email=email.strip(), show_otp="1")
         
     token = create_access_token(
         data={"sub": str(user["id"]), "user_id": user["id"], "email": user["email"]}
     )
     create_session(user["id"], token)
     
-    redirect = _redirect("http://localhost:8501/")
+    redirect = _redirect(f"{FRONTEND_URL}/")
     redirect.set_cookie(value=token, **make_session_cookie_kwargs(is_local))
     return redirect
 
@@ -306,10 +310,10 @@ def form_signup(
     try:
         check_rate_limit(req)
     except HTTPException:
-        return _redirect("http://localhost:8501/", mode="signup", error="Too many requests.")
+        return _redirect(f"{FRONTEND_URL}/", mode="signup", error="Too many requests.")
         
     if password != confirm_password:
-        return _redirect("http://localhost:8501/", mode="signup", error="Passwords do not match.")
+        return _redirect(f"{FRONTEND_URL}/", mode="signup", error="Passwords do not match.")
         
     email_clean = email.strip()
     existing = db.one("SELECT id, is_active FROM users WHERE email = %s", (email_clean,))
@@ -321,7 +325,7 @@ def form_signup(
     
     if existing:
         if existing.get("is_active"):
-            return _redirect("http://localhost:8501/", mode="signup", error="Email already registered.")
+            return _redirect(f"{FRONTEND_URL}/", mode="signup", error="Email already registered.")
         else:
             with db.connection() as conn:
                 conn.execute(
@@ -336,7 +340,7 @@ def form_signup(
             )
             
     print(f"\n{'='*40}\nOTP for {email_clean}: {otp}\n{'='*40}\n")
-    return _redirect("http://localhost:8501/", success="Check the server console for your OTP.", verify_email=email_clean, show_otp="1")
+    return _redirect(f"{FRONTEND_URL}/", success="Check the server console for your OTP.", verify_email=email_clean, show_otp="1")
 
 @app.post("/auth/form/verify-otp")
 def form_verify_otp(
@@ -347,20 +351,20 @@ def form_verify_otp(
     try:
         check_rate_limit(req)
     except HTTPException:
-        return _redirect("http://localhost:8501/", error="Too many requests.", verify_email=email, show_otp="1")
+        return _redirect(f"{FRONTEND_URL}/", error="Too many requests.", verify_email=email, show_otp="1")
         
     is_local = os.getenv("APP_ENV", "local") == "local"
     email_clean = email.strip()
     user = db.one("SELECT id, email, otp_hash, otp_expires_at FROM users WHERE email = %s AND is_active = False", (email_clean,))
     
     if not user:
-        return _redirect("http://localhost:8501/", error="User not found or already verified.", verify_email=email_clean, show_otp="1")
+        return _redirect(f"{FRONTEND_URL}/", error="User not found or already verified.", verify_email=email_clean, show_otp="1")
         
     if not user["otp_expires_at"] or datetime.fromisoformat(user["otp_expires_at"]) < datetime.now(UTC):
-        return _redirect("http://localhost:8501/", error="OTP expired. Please sign up again.")
+        return _redirect(f"{FRONTEND_URL}/", error="OTP expired. Please sign up again.")
         
     if not user["otp_hash"] or not verify_password(otp.strip(), user["otp_hash"]):
-        return _redirect("http://localhost:8501/", error="Invalid OTP.", verify_email=email_clean, show_otp="1")
+        return _redirect(f"{FRONTEND_URL}/", error="Invalid OTP.", verify_email=email_clean, show_otp="1")
         
     with db.connection() as conn:
         conn.execute("UPDATE users SET is_active = True, otp_hash = NULL, otp_expires_at = NULL WHERE id = %s", (user["id"],))
@@ -368,7 +372,7 @@ def form_verify_otp(
     token = create_access_token(data={"sub": str(user["id"]), "user_id": user["id"], "email": user["email"]})
     create_session(user["id"], token)
     
-    redirect = _redirect("http://localhost:8501/")
+    redirect = _redirect(f"{FRONTEND_URL}/")
     redirect.set_cookie(value=token, **make_session_cookie_kwargs(is_local))
     return redirect
 
@@ -453,7 +457,7 @@ async def google_callback(code: str):
     # Redirect back to Streamlit — cookie is set on the FastAPI origin (localhost:8000).
     # Streamlit reads it via st.context.cookies which bridges the browser cookie store
     # to Streamlit's Python backend over its WebSocket protocol (not JS).
-    redirect = RedirectResponse(url="http://localhost:8501/")
+    redirect = RedirectResponse(url=f"{FRONTEND_URL}/")
     redirect.set_cookie(value=token, **make_session_cookie_kwargs(is_local))
     return redirect
 

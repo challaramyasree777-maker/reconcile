@@ -296,7 +296,7 @@ def form_login(
     )
     create_session(user["id"], token)
     
-    redirect = _redirect(f"{FRONTEND_URL}/")
+    redirect = _redirect(f"{FRONTEND_URL}/", token=token)
     redirect.set_cookie(value=token, **make_session_cookie_kwargs(is_local))
     return redirect
 
@@ -372,7 +372,7 @@ def form_verify_otp(
     token = create_access_token(data={"sub": str(user["id"]), "user_id": user["id"], "email": user["email"]})
     create_session(user["id"], token)
     
-    redirect = _redirect(f"{FRONTEND_URL}/")
+    redirect = _redirect(f"{FRONTEND_URL}/", token=token)
     redirect.set_cookie(value=token, **make_session_cookie_kwargs(is_local))
     return redirect
 
@@ -454,10 +454,8 @@ async def google_callback(code: str):
     token = create_access_token(data={"sub": str(user_id), "user_id": user_id, "email": email})
     create_session(user_id, token)
     is_local = os.getenv("APP_ENV", "local") == "local"
-    # Redirect back to Streamlit — cookie is set on the FastAPI origin (localhost:8000).
-    # Streamlit reads it via st.context.cookies which bridges the browser cookie store
-    # to Streamlit's Python backend over its WebSocket protocol (not JS).
-    redirect = RedirectResponse(url=f"{FRONTEND_URL}/")
+    # Pass the token to Streamlit so it can persist a cookie on its own origin.
+    redirect = RedirectResponse(url=f"{FRONTEND_URL}/?{urllib.parse.urlencode({'token': token})}")
     redirect.set_cookie(value=token, **make_session_cookie_kwargs(is_local))
     return redirect
 

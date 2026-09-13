@@ -5,21 +5,19 @@ Session strategy
 ----------------
 FastAPI sets a `reconcile_session` cookie with HttpOnly; SameSite=Lax;
 Secure (in production).  JavaScript cannot read this cookie at all.
-Streamlit's `st.context.cookies` exposes browser cookies to Python via
-Streamlit's WebSocket protocol — not via JS — so the HttpOnly flag is
-fully respected.  Streamlit's backend then forwards the token as a Bearer
-header in server-side `requests` calls to FastAPI.
-
-No token ever appears in the URL, in JS-readable storage, or in the JSON
-response body.  The only JS-readable representation is the short-lived
-Streamlit session_state which is in-process server memory, not the browser.
+After login, FastAPI passes the token in a one-time URL query parameter.
+Streamlit captures and clears that parameter, stores the token in session_state,
+and writes a persistent cookie scoped to the frontend origin. Streamlit also
+restores the token from that frontend cookie after a page refresh.
 """
 from __future__ import annotations
 
+import json
 import os
 
 import requests
 import streamlit as st
+import streamlit.components.v1 as components
 from jose import JWTError, jwt
 
 API_URL = os.getenv("RECONCILE_API_URL", "http://localhost:8000")
@@ -75,15 +73,20 @@ st.markdown(
 
 
 def _token_from_cookie() -> str | None:
-    """Read the HttpOnly session cookie via Streamlit's WebSocket cookie bridge.
-
-    st.context.cookies gives Python server-side access to browser cookies.
-    This is NOT JavaScript — HttpOnly is respected.
-    """
+    """Read the frontend-scoped session cookie via Streamlit's cookie bridge."""
     try:
         return st.context.cookies.get(COOKIE_NAME)
     except Exception:
         return None
+
+
+def _persist_frontend_cookie(token: str) -> None:
+    """Write the session cookie on the Streamlit origin in the browser."""
+    cookie_value = json.dumps(f"{COOKIE_NAME}={token}; path=/; max-age=2592000; SameSite=Lax")
+    components.html(
+        f"<script>document.cookie = {cookie_value} + (window.location.protocol === 'https:' ? '; Secure' : '');</script>",
+        height=0,
+    )
 
 
 def _decode_email(token: str) -> str | None:
@@ -94,7 +97,16 @@ def _decode_email(token: str) -> str | None:
         return None
 
 
-# ── Restore session from HttpOnly cookie on every page load ─────────────────
+# ── Capture the one-time hand-off before routing, then remove it from the URL ─
+query_token = st.query_params.get("token")
+if query_token:
+    st.session_state["token"] = query_token
+    st.session_state["email"] = _decode_email(query_token)
+    st.query_params.clear()
+    _persist_frontend_cookie(query_token)
+
+
+# ── Restore session from the frontend cookie on every page load ─────────────
 if not st.session_state.get("token"):
     cookie_token = _token_from_cookie()
     if cookie_token:

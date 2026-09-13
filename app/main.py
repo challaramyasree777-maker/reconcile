@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import os
 import time
 import random
@@ -9,7 +8,6 @@ from contextlib import asynccontextmanager
 from datetime import datetime, UTC, timedelta
 from pathlib import Path
 from typing import Any
-from uuid import uuid4
 
 import httpx
 from fastapi import Depends, FastAPI, Form, HTTPException, Request, Response, status
@@ -484,140 +482,10 @@ def logout(
     return {"detail": "Logged out successfully"}
 
 
-@app.post("/demo/session")
-def demo_session(response: Response) -> dict[str, str]:
-    """Issue a silent product session for the single-company demo experience."""
-    admin_email = os.getenv("ADMIN_EMAIL", "admin@example.com").strip()
-    user = db.one("SELECT id, email FROM users WHERE email = %s", (admin_email,))
-    if not user:
-        raise HTTPException(status_code=503, detail="Demo account is not available.")
-
-    token = create_access_token(
-        data={"sub": str(user["id"]), "user_id": user["id"], "email": user["email"]}
-    )
-    create_session(user["id"], token)
-    is_local = os.getenv("APP_ENV", "local") == "local"
-    response.set_cookie(value=token, **make_session_cookie_kwargs(is_local))
-    return {"access_token": token, "email": user["email"]}
-
-
-def _seed_local_demo_run(user_id: int, reason: str | None = None) -> dict[str, Any]:
-    """Create deterministic demo records when an external sandbox is unavailable."""
-    demo_transactions = [
-        ("Northstar Coffee", 18.50, "Meals & Entertainment", "flagged"),
-        ("Harbor Office Supply", 142.00, "Office Supplies", "flagged"),
-        ("Metro Electric", 86.25, "Utilities", "posted"),
-        ("Cloudline Software", 49.00, "Software", "posted"),
-    ]
-    with db.connection() as conn:
-        cursor = conn.execute(
-            "INSERT INTO runs(user_id, source, status, transaction_count, created_at) VALUES (%s, %s, %s, %s, %s) RETURNING id",
-            (user_id, "plaid_sandbox_demo", "completed", len(demo_transactions), db.now()),
-        )
-        row = cursor.fetchone()
-        run_id = row["id"] if isinstance(row, dict) or hasattr(row, "keys") else row[0]
-        transaction_ids: list[int] = []
-
-        for index, (vendor, amount, category, status_value) in enumerate(demo_transactions, start=1):
-            transaction_cursor = conn.execute(
-                """
-                INSERT INTO transactions
-                (user_id, run_id, source, external_id, raw_payload, parsed_amount, parsed_date, parsed_vendor_raw, status, created_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                RETURNING id
-                """,
-                (
-                    user_id,
-                    run_id,
-                    "bank",
-                    f"demo-{uuid4().hex}",
-                    json.dumps({"demo": True, "vendor": vendor}),
-                    amount,
-                    f"2026-09-{10 + index:02d}",
-                    vendor,
-                    status_value,
-                    db.now(),
-                ),
-            )
-            transaction_row = transaction_cursor.fetchone()
-            transaction_id = (
-                transaction_row["id"]
-                if isinstance(transaction_row, dict) or hasattr(transaction_row, "keys")
-                else transaction_row[0]
-            )
-            transaction_ids.append(transaction_id)
-            confidence = 0.72 if status_value == "flagged" else 0.96
-            action = "escalate" if status_value == "flagged" else "auto_post"
-            conn.execute(
-                """
-                INSERT INTO match_decisions
-                (user_id, transaction_id, proposed_vendor, category, confidence_score, reasoning, action, created_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-                """,
-                (
-                    user_id,
-                    transaction_id,
-                    vendor,
-                    category,
-                    confidence,
-                    "Deterministic Plaid Sandbox demonstration decision.",
-                    action,
-                    db.now(),
-                ),
-            )
-            if status_value == "posted":
-                conn.execute(
-                    """
-                    INSERT INTO ledger_entries
-                    (user_id, transaction_id, external_ledger_id, amount, vendor, status, created_at)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s)
-                    """,
-                    (user_id, transaction_id, f"demo-ledger-{uuid4().hex[:12]}", amount, vendor, "posted", db.now()),
-                )
-
-    for transaction_id, (_, _, _, status_value) in zip(transaction_ids, demo_transactions):
-        db.add_audit(
-            transaction_id,
-            "transaction_ingested",
-            {"source": "plaid_sandbox_demo", "demo": True},
-            user_id=user_id,
-        )
-        db.add_audit(
-            transaction_id,
-            "human_review_required" if status_value == "flagged" else "ledger_synced",
-            {"demo": True},
-            user_id=user_id,
-        )
-    db.add_audit(
-        None,
-        "run_completed",
-        {
-            "run_id": run_id,
-            "source": "plaid_sandbox_demo",
-            "fallback": True,
-            "reason": reason or "External sandbox returned no transactions.",
-            "transaction_ids": transaction_ids,
-        },
-        user_id=user_id,
-    )
-    return {
-        "run_id": run_id,
-        "source": "plaid_sandbox_demo",
-        "inserted": len(demo_transactions),
-        "flagged": 2,
-        "status": "completed",
-        "fallback": True,
-        "ledger": {"posted": 2, "failed": 0, "adapter": "quickbooks_sandbox"},
-    }
-
-
 @app.post("/runs/demo")
 def trigger_demo_run(current_user: dict[str, Any] = Depends(get_current_user)) -> dict[str, Any]:
     uid = current_user["id"]
     run = ingestion.create_run(user_id=uid)
-    if not run.get("run_id"):
-        return _seed_local_demo_run(uid, run.get("error"))
-
     transaction_ids: list[int] = []
     workflow_results: list[dict[str, Any]] = []
 

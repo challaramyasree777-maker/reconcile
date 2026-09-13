@@ -7,8 +7,14 @@ import requests
 import streamlit as st
 
 API_URL = os.getenv("RECONCILE_API_URL", "http://localhost:8000")
+COOKIE_NAME = "reconcile_session"
+
+
 def _get_session_token() -> str | None:
-    return st.session_state.get("token")
+    """Read the session token from the HttpOnly cookie via Streamlit's cookie bridge.
+    Falls back to session_state if already hydrated this run.
+    """
+    return st.session_state.get("token") or st.context.cookies.get(COOKIE_NAME)
 
 
 def get_auth_headers() -> dict[str, str]:
@@ -40,6 +46,22 @@ def get(path: str) -> list[dict[str, Any]]:
         return response.json()
     return []
 
+
+user_col, logout_col = st.columns([4, 1])
+with user_col:
+    st.markdown(f"<div class='user-badge'>Logged in as: <strong>{st.session_state.get('email', 'User')}</strong></div>", unsafe_allow_html=True)
+with logout_col:
+    if st.button("Log out", key="logout-btn"):
+        # Revoke the session server-side first (marks the token_hash as revoked in DB)
+        try:
+            requests.post(f"{API_URL}/auth/logout", headers=get_auth_headers(), timeout=5)
+        except Exception:
+            pass  # Best-effort; session_state clear below is always safe
+        st.session_state.pop("token", None)
+        st.session_state.pop("email", None)
+        # The browser's HttpOnly cookie is cleared by the Set-Cookie: max-age=0
+        # header returned by POST /auth/logout.  No JS needed.
+        st.rerun()
 
 # ── Reset demo data expander ────────────────────────────────────────────────
 with st.expander("⚠️ Reset demo data", expanded=False):

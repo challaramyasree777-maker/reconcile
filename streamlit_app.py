@@ -1,12 +1,28 @@
-"""Reconcile Streamlit entrypoint."""
+"""
+Reconcile — Streamlit entrypoint.
+
+Session strategy
+----------------
+FastAPI sets a `reconcile_session` cookie with HttpOnly; SameSite=Lax;
+Secure (in production).  JavaScript cannot read this cookie at all.
+After login, FastAPI passes the token in a one-time URL query parameter.
+Streamlit captures and clears that parameter, stores the token in session_state,
+and writes a persistent cookie scoped to the frontend origin. Streamlit also
+restores the token from that frontend cookie after a page refresh.
+"""
 from __future__ import annotations
 
+import json
 import os
 
 import requests
 import streamlit as st
+import streamlit.components.v1 as components
+from jose import JWTError, jwt
 
 API_URL = os.getenv("RECONCILE_API_URL", "http://localhost:8000")
+COOKIE_NAME = "reconcile_session"
+SECRET_KEY = os.getenv("SECRET_KEY", "reconcile-secret-key-for-local-development-32-chars-long")
 
 st.set_page_config(
     page_title="Reconcile — Agentic Bookkeeping",
@@ -44,6 +60,8 @@ st.markdown(
     input, textarea { background: var(--white); color: var(--ink); border-color: var(--line); }
     code { font-family: 'Space Mono', monospace; }
     .bulk-bar { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: .75rem 1rem; margin-bottom: 1rem; }
+    .login-container { max-width: 26rem; margin: 2rem auto; padding: 2rem; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; }
+    .user-badge { font-family: 'Space Mono', monospace; font-size: .8rem; color: var(--muted); }
     *:focus-visible { outline: 2px solid var(--orange) !important; outline-offset: 2px !important; }
     .app-footer { border-top: 1px solid var(--line); margin-top: 3rem; padding: 1.5rem 0 .5rem; font-size: .8rem; color: var(--muted); font-family: 'Space Mono', monospace; }
     .app-footer a { color: var(--muted); text-decoration: underline; }
@@ -54,15 +72,57 @@ st.markdown(
 )
 
 
-if not st.session_state.get("token"):
+def _token_from_cookie() -> str | None:
+    """Read the frontend-scoped session cookie via Streamlit's cookie bridge."""
     try:
-        response = requests.post(f"{API_URL}/demo/session", timeout=5)
-        if response.ok:
-            st.session_state["token"] = response.json()["access_token"]
-    except requests.RequestException:
-        pass
+        return st.context.cookies.get(COOKIE_NAME)
+    except Exception:
+        return None
 
-pages = {
+
+def _persist_frontend_cookie(token: str) -> None:
+    """Write the session cookie on the Streamlit origin in the browser."""
+    cookie_value = json.dumps(f"{COOKIE_NAME}={token}; path=/; max-age=2592000; SameSite=Lax")
+    components.html(
+        f"<script>document.cookie = {cookie_value} + (window.location.protocol === 'https:' ? '; Secure' : '');</script>",
+        height=0,
+    )
+
+
+def _decode_email(token: str) -> str | None:
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=["HS256"])
+        return payload.get("email")
+    except JWTError:
+        return None
+
+
+# ── Capture the one-time hand-off before routing, then remove it from the URL ─
+query_token = st.query_params.get("token")
+if query_token:
+    st.session_state["token"] = query_token
+    st.session_state["email"] = _decode_email(query_token)
+    st.query_params.clear()
+    _persist_frontend_cookie(query_token)
+
+
+# ── Restore session from the frontend cookie on every page load ─────────────
+if not st.session_state.get("token"):
+    cookie_token = _token_from_cookie()
+    if cookie_token:
+        st.session_state["token"] = cookie_token
+        st.session_state["email"] = _decode_email(cookie_token)
+
+
+# ── Route to public or protected pages ──────────────────────────────────────
+public_pages = {
+    "Public": [
+        st.Page("pages/landing.py", title="Sign In / Register", default=True, icon="🔐"),
+        st.Page("pages/how_to_use.py", title="How to Use", icon="📖"),
+    ]
+}
+
+protected_pages = {
     "Control Room": [
         st.Page("pages/control_room.py", title="Dashboard", default=True, icon="🎛️"),
     ],
@@ -71,5 +131,5 @@ pages = {
     ],
 }
 
-pg = st.navigation(pages)
+pg = st.navigation(protected_pages if st.session_state.get("token") else public_pages)
 pg.run()

@@ -1,0 +1,9 @@
+# Robots exclusion — Reconcile
+# Replace BASE_DOMAIN with your actual domain before publishing.
+
+User-agent: *
+# The application is behind authentication — no content is publicly indexable.
+Disallow: /
+
+# Allow search engines to find the sitemap
+Sitemap: https://BASE_DOMAIN.example.com/sitemap.xml

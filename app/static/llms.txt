@@ -1,0 +1,31 @@
+# Reconcile — llms.txt
+# Machine-readable site description for LLM-powered crawlers and assistants.
+# See https://llmstxt.org/
+
+# Replace BASE_DOMAIN with your actual domain before publishing.
+
+> Reconcile is an agentic bookkeeping control room for small operators.
+> It ingests bank transactions via Plaid, categorises them using a Groq large language model
+> running inside a LangGraph workflow, routes them to human review or automatic posting,
+> and syncs approved entries to QuickBooks. Every agent decision and human correction is
+> recorded in a full audit trail. Access requires authentication; no public read content exists.
+
+## Key capabilities
+- Bank transaction ingestion (Plaid)
+- AI-powered vendor categorisation with learned memory (Groq / LangGraph)
+- Human-in-the-loop review queue with bulk actions
+- Ledger synchronisation (QuickBooks)
+- Full audit trail and agent decision evidence log
+- Per-user data isolation
+
+## Access
+- Login required for all features
+- No public signup at this time
+
+## Operator
+[OPERATOR NAME] — individual operator, India
+
+## Legal
+- Privacy Policy: https://BASE_DOMAIN.example.com/docs/privacy-policy
+- Terms of Service: https://BASE_DOMAIN.example.com/docs/terms-of-service
+- Cookie Policy: https://BASE_DOMAIN.example.com/docs/cookie-policy

@@ -1,94 +1,123 @@
+"""
+Reconcile — Streamlit entrypoint.
+
+Session strategy
+----------------
+FastAPI sets a `reconcile_session` cookie with HttpOnly; SameSite=Lax;
+Secure (in production).  JavaScript cannot read this cookie at all.
+Streamlit's `st.context.cookies` exposes browser cookies to Python via
+Streamlit's WebSocket protocol — not via JS — so the HttpOnly flag is
+fully respected.  Streamlit's backend then forwards the token as a Bearer
+header in server-side `requests` calls to FastAPI.
+
+No token ever appears in the URL, in JS-readable storage, or in the JSON
+response body.  The only JS-readable representation is the short-lived
+Streamlit session_state which is in-process server memory, not the browser.
+"""
 from __future__ import annotations
 
 import os
-from typing import Any
 
 import requests
 import streamlit as st
+from jose import JWTError, jwt
 
 API_URL = os.getenv("RECONCILE_API_URL", "http://localhost:8000")
+COOKIE_NAME = "reconcile_session"
+SECRET_KEY = os.getenv("SECRET_KEY", "reconcile-secret-key-for-local-development-32-chars-long")
 
-st.set_page_config(page_title="Reconcile / control room", page_icon="R", layout="wide")
+st.set_page_config(
+    page_title="Reconcile — Agentic Bookkeeping",
+    page_icon="📒",
+    layout="wide",
+    menu_items={
+        "Get Help": None,
+        "Report a bug": None,
+        "About": "Reconcile — agentic bookkeeping control room. Version 0.1.0.",
+    },
+)
+
 st.markdown(
     """
     <style>
     @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=Space+Mono&display=swap');
-    :root { --ink: #17211b; --muted: #6d776f; --paper: #f4f1e8; --mint: #b9d9c2; --orange: #ee865b; }
+    :root { --ink: #17211b; --muted: #46534c; --paper: #f7f8f5; --panel: #e8eee8; --line: #b8c5bb; --mint: #b9d9c2; --orange: #a94420; --white: #ffffff; }
     .stApp { background: var(--paper); color: var(--ink); }
+    [data-testid='stAppViewContainer'], [data-testid='stHeader'] { background: var(--paper); }
+    [data-testid='stMarkdownContainer'], [data-testid='stMarkdownContainer'] p, label, .stCaption, .stTextInput label { color: var(--ink); }
     h1, h2, h3 { font-family: 'DM Sans', sans-serif; letter-spacing: 0; }
     p, label, .stMarkdown { font-family: 'DM Sans', sans-serif; }
     .eyebrow { color: var(--orange); font-family: 'Space Mono', monospace; font-size: .75rem; letter-spacing: .12em; text-transform: uppercase; }
-    .hero { border-bottom: 1px solid #c9c7bb; padding: 1rem 0 1.75rem; margin-bottom: 1.5rem; }
+    .hero { border-bottom: 1px solid var(--line); padding: 1rem 0 1.75rem; margin-bottom: 1.5rem; }
     .hero h1 { font-size: 3.5rem; margin: .15rem 0 0; }
     .hero p { color: var(--muted); font-size: 1.05rem; max-width: 38rem; }
-    [data-testid='stMetric'] { background: #e6eadf; border: 1px solid #d0d7c9; padding: 1rem; border-radius: 6px; }
-    .stButton > button { background: var(--ink); color: white; border: 0; border-radius: 4px; padding: .65rem 1rem; }
+    [data-testid='stMetric'] { background: var(--panel); color: var(--ink); border: 1px solid var(--line); padding: 1rem; border-radius: 6px; }
+    [data-testid='stMetricLabel'], [data-testid='stMetricValue'] { color: var(--ink); }
+    .stButton > button, .stFormSubmitButton > button, button[data-testid^='stBaseButton'] { background: var(--ink) !important; color: var(--white) !important; border: 0; border-radius: 4px; padding: .65rem 1rem; }
+    .stButton > button *, .stFormSubmitButton > button *, button[data-testid^='stBaseButton'] * { color: var(--white) !important; }
+    .stButton > button:hover, .stFormSubmitButton > button:hover, button[data-testid^='stBaseButton']:hover { background: #2f493b !important; color: var(--white) !important; }
+    .stButton > button:hover *, .stFormSubmitButton > button:hover *, button[data-testid^='stBaseButton']:hover * { color: var(--white) !important; }
+    [data-testid='stDataFrame'], [data-testid='stTable'] { border: 1px solid var(--line); }
+    [data-testid='stAlert'] { color: var(--ink); }
+    input, textarea { background: var(--white); color: var(--ink); border-color: var(--line); }
     code { font-family: 'Space Mono', monospace; }
+    .bulk-bar { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: .75rem 1rem; margin-bottom: 1rem; }
+    .login-container { max-width: 26rem; margin: 2rem auto; padding: 2rem; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; }
+    .user-badge { font-family: 'Space Mono', monospace; font-size: .8rem; color: var(--muted); }
+    *:focus-visible { outline: 2px solid var(--orange) !important; outline-offset: 2px !important; }
+    .app-footer { border-top: 1px solid var(--line); margin-top: 3rem; padding: 1.5rem 0 .5rem; font-size: .8rem; color: var(--muted); font-family: 'Space Mono', monospace; }
+    .app-footer a { color: var(--muted); text-decoration: underline; }
+    .app-footer a:hover { color: var(--ink); }
     </style>
     """,
     unsafe_allow_html=True,
 )
 
 
-def get(path: str) -> list[dict[str, Any]]:
+def _token_from_cookie() -> str | None:
+    """Read the HttpOnly session cookie via Streamlit's WebSocket cookie bridge.
+
+    st.context.cookies gives Python server-side access to browser cookies.
+    This is NOT JavaScript — HttpOnly is respected.
+    """
     try:
-        response = requests.get(f"{API_URL}{path}", timeout=3)
-        response.raise_for_status()
-        return response.json()
-    except requests.RequestException as exc:
-        st.error(f"Backend unavailable: {exc}")
-        return []
+        return st.context.cookies.get(COOKIE_NAME)
+    except Exception:
+        return None
 
 
-st.markdown('<div class="hero"><div class="eyebrow">Autonomous bookkeeping / phase 01</div><h1>Reconcile</h1><p>A calm control room for moving bank activity into the ledger, with every handoff visible.</p></div>', unsafe_allow_html=True)
-
-if st.button("Run Plaid sandbox demo", type="primary"):
+def _decode_email(token: str) -> str | None:
     try:
-        response = requests.post(f"{API_URL}/runs/demo", timeout=10)
-        response.raise_for_status()
-        st.success(f"Run {response.json()['run_id']} completed and {response.json()['ledger']['posted']} entries synced.")
-        st.rerun()
-    except requests.RequestException as exc:
-        st.error(f"Run failed: {exc}")
+        payload = jwt.decode(token, SECRET_KEY, algorithms=["HS256"])
+        return payload.get("email")
+    except JWTError:
+        return None
 
-transactions = get("/transactions")
-ledger_entries = get("/ledger")
-audits = get("/audit")
-runs = get("/runs")
 
-posted = sum(item["status"] == "posted" for item in transactions)
-col1, col2, col3, col4 = st.columns(4)
-col1.metric("Runs", len(runs))
-col2.metric("Transactions", len(transactions))
-col3.metric("Posted", posted)
-col4.metric("Audit events", len(audits))
+# ── Restore session from HttpOnly cookie on every page load ─────────────────
+if not st.session_state.get("token"):
+    cookie_token = _token_from_cookie()
+    if cookie_token:
+        st.session_state["token"] = cookie_token
+        st.session_state["email"] = _decode_email(cookie_token)
 
-left, right = st.columns([1.25, 1])
-with left:
-    st.subheader("Bank intake")
-    if transactions:
-        st.dataframe(
-            [{"vendor": item["parsed_vendor_raw"], "amount": f"${item['parsed_amount']:,.2f}", "date": item["parsed_date"], "status": item["status"], "source id": item["external_id"]} for item in transactions],
-            use_container_width=True,
-            hide_index=True,
-        )
-    else:
-        st.info("No transactions yet. Trigger the demo run to begin the flow.")
 
-with right:
-    st.subheader("Ledger sync")
-    st.dataframe(
-        [{"ledger id": item["external_ledger_id"], "vendor": item["vendor"], "amount": f"${item['amount']:,.2f}", "status": item["status"]} for item in ledger_entries],
-        use_container_width=True,
-        hide_index=True,
-    )
+# ── Route to public or protected pages ──────────────────────────────────────
+public_pages = {
+    "Public": [
+        st.Page("pages/landing.py", title="Sign In / Register", default=True, icon="🔐"),
+        st.Page("pages/how_to_use.py", title="How to Use", icon="📖"),
+    ]
+}
 
-st.subheader("Audit trail")
-if audits:
-    st.dataframe(
-        [{"event": item["event_type"], "actor": item["actor"], "detail": item["detail_text"], "at": item["created_at"]} for item in audits[:20]],
-        use_container_width=True,
-        hide_index=True,
-    )
-else:
-    st.info("Audit events will appear here after the first run.")
+protected_pages = {
+    "Control Room": [
+        st.Page("pages/control_room.py", title="Dashboard", default=True, icon="🎛️"),
+    ],
+    "Documentation": [
+        st.Page("pages/how_to_use.py", title="How to Use", icon="📖"),
+    ],
+}
+
+pg = st.navigation(protected_pages if st.session_state.get("token") else public_pages)
+pg.run()

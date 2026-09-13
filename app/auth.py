@@ -21,6 +21,11 @@ ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "480"
 SESSION_COOKIE_MAX_AGE = 60 * 60 * 24 * 30
 COOKIE_NAME = "reconcile_session"
 
+GOOGLE_REDIRECT_URI = os.getenv(
+    "GOOGLE_REDIRECT_URI",
+    "http://localhost:8000/auth/google/callback"
+)
+
 security = HTTPBearer(auto_error=False)
 
 

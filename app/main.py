@@ -25,6 +25,7 @@ from app.auth import (
     make_session_cookie_kwargs,
     revoke_session,
     verify_password,
+    GOOGLE_REDIRECT_URI,
 )
 from app.services import corrections, ingestion
 from app.services.workflow import build_graph
@@ -380,7 +381,7 @@ def google_login(req: Request):
     if not client_id:
         raise HTTPException(status_code=500, detail="Google Client ID not configured.")
     
-    redirect_uri = "http://localhost:8000/auth/google/callback"
+    redirect_uri = GOOGLE_REDIRECT_URI
     auth_url = (
         f"https://accounts.google.com/o/oauth2/v2/auth?"
         f"client_id={client_id}&response_type=code&scope=openid%20email%20profile&"
@@ -393,7 +394,7 @@ def google_login(req: Request):
 async def google_callback(code: str):
     client_id = os.getenv("GOOGLE_CLIENT_ID")
     client_secret = os.getenv("GOOGLE_CLIENT_SECRET")
-    redirect_uri = "http://localhost:8000/auth/google/callback"
+    redirect_uri = GOOGLE_REDIRECT_URI
     
     if not client_id or not client_secret:
         raise HTTPException(status_code=500, detail="Google Auth not configured.")
